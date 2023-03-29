@@ -1,18 +1,34 @@
 package cloudeventtransform
 
 import (
+	"log"
+	"path/filepath"
 	"testing"
 
-	"github.com/knadh/koanf/providers/confmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/confmap/confmaptest"
 )
 
 func TestLoadConfig(t *testing.T) {
-        factory := NewFactory()
-        cfg := factory.CreateDefaultConfig()
+	cm, err := confmaptest.LoadConf(filepath.Join("testdata", "config.yaml"))
+	require.NoError(t, err)
 
-        assert.NoError(t, component.UnmarshalConfig(confmap.New(), cfg))
-        assert.Equal(t, factory.CreateDefaultConfig(), cfg)
+	cloudEventConfig := Config	{
+		Ce: CloudEventSpec	{
+			Id: "test",
+			SpecVersion: "test_again",
+			Type: "test_again_again",
+			Source: "test_again_again_again",
+		},
+	}
+
+	unmarsheledConf := Config{}
+	err = cm.Unmarshal(&unmarsheledConf)
+
+	if err != nil	{
+		log.Panicln("Couldn't convert the passed config.yaml to valid YAML", err)
+	}
+
+	assert.Equal(t, unmarsheledConf, cloudEventConfig)
 }

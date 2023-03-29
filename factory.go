@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/processor"
+	"go.opentelemetry.io/collector/processor/processorhelper"
 )
 
 const (
@@ -41,9 +42,17 @@ func createLogsProcessor(
 		        return nil, errors.New("could not initialize cloud-event transform processor")
 	    }
 
-        if len(pCfg.BaseConfig.Operators) == 0 {
-                return nil, errors.New("no operators were configured for this cloud-event transform processor")
+        ceProcessor, err := newProcessor(set.TelemetrySettings, pCfg)
+        if err != nil   {
+		        return nil, errors.New("Failed to create cloud-event processor")
         }
 
-        return newProcessor(pCfg, nextConsumer, set.Logger)
+        return processorhelper.NewLogsProcessor(
+                ctx,
+                set,
+                cfg,
+                nextConsumer,
+                ceProcessor.processLogs,
+                processorhelper.WithCapabilities(ceProcessor.Capabilities()),
+        )
 }
