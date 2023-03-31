@@ -187,20 +187,6 @@ func converRawMsgtToCloudEvent(ce *cloudeventTransformProcessor, ld *plog.Logs) 
 	return nil
 }
 
-func convertStrToCloudEventByteSlice(s *string) []byte {
-	strLen := len(*s)
-	slice := make([]byte, 0, 512)
-
-	for i := 0; i < strLen; i++ {
-		currentByte := (*s)[i]
-		if !(uint8('\\') == currentByte || uint8(0x00) == currentByte) {
-			slice = append(slice, currentByte)
-		}
-	}
-
-	return slice
-}
-
 /*
 	This function takes key and adds quotes around it and leaves value as is
 	Ex: `key` will become `"key"` and `val` will becom `"val"`
