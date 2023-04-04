@@ -21,6 +21,7 @@ func TestLoadConfig(t *testing.T) {
 			Type:        "test_again_again",
 			Source:      "test_again_again_again",
 		},
+		Filter: "*",
 	}
 
 	unmarsheledConf := Config{}

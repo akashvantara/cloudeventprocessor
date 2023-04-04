@@ -3,3 +3,4 @@ ce:
   spec_version: test_again
   type: test_again_again
   source: test_again_again_again
+filter: "*"

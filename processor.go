@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -33,6 +34,11 @@ const (
 	QUOTE_BYTE       = byte('"')
 )
 
+var (
+	filters        []string
+	filterAllowAll bool = false
+)
+
 type cloudeventTransformProcessor struct {
 	id          string
 	source      string
@@ -41,7 +47,7 @@ type cloudeventTransformProcessor struct {
 }
 
 type cloudeventdata struct {
-	count     uint
+	count     int
 	message   string
 	name      string
 	namespace string
@@ -52,10 +58,10 @@ type cloudeventdata struct {
 
 func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTransformProcessor, error) {
 	defaultConfig := CreateDefaultConfig()
-
 	conf := defaultConfig.(*Config)
+	var err error = nil
 
-	if err := cfg.Validate(); err != nil {
+	if err = cfg.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -75,6 +81,21 @@ func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTran
 		conf.Ce.Source = cfg.Ce.Source
 	}
 
+	if len(cfg.Filter) > 0 {
+		filters = strings.Split(cfg.Filter, "|")
+		filtersLen := len(filters)
+
+		if filtersLen == 0 {
+			err = errors.New(
+				fmt.Sprintf("some valid fields should be provided in filters ('*', 'Created|Deleted'), provided: %s",
+					cfg.Filter,
+				),
+			)
+		} else if filtersLen == 1 && filters[0] == "*" {
+			filterAllowAll = true
+		}
+	}
+
 	p := &cloudeventTransformProcessor{
 		id:          conf.Ce.Id,
 		source:      conf.Ce.Source,
@@ -82,7 +103,7 @@ func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTran
 		typ:         conf.Ce.Type,
 	}
 
-	return p, nil
+	return p, err
 }
 
 func (ce *cloudeventTransformProcessor) Capabilities() consumer.Capabilities {
@@ -90,14 +111,38 @@ func (ce *cloudeventTransformProcessor) Capabilities() consumer.Capabilities {
 }
 
 func (ce *cloudeventTransformProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog.Logs, error) {
-	if err := converRawMsgtToCloudEvent(ce, &ld); err != nil {
-		return ld, err
-	}
-
-	return ld, nil
+	return ld, converRawMsgtToCloudEvent(ce, &ld)
 }
 
 func converRawMsgtToCloudEvent(ce *cloudeventTransformProcessor, ld *plog.Logs) error {
+	var cloudEventData cloudeventdata
+
+	if !filterAllowAll {
+		ld.ResourceLogs().RemoveIf(func(rl plog.ResourceLogs) bool {
+			rl.ScopeLogs().RemoveIf(func(sl plog.ScopeLogs) bool {
+				sl.LogRecords().RemoveIf(func(lr plog.LogRecord) bool {
+					reason, reasonOk := lr.Attributes().Get(ATTR_EVENT_REASON)
+					if !reasonOk {
+						return false
+					}
+
+					reasonFound := false
+					for _, r := range filters {
+						if r == reason.AsString() {
+							reasonFound = true
+							break
+						}
+					}
+
+					return !reasonFound
+				})
+				return sl.LogRecords().Len() == 0
+			})
+			return rl.ScopeLogs().Len() == 0
+		})
+	}
+
+	// Convert the log/s
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		scopeLogs := ld.ResourceLogs().At(i).ScopeLogs()
 
@@ -107,7 +152,6 @@ func converRawMsgtToCloudEvent(ce *cloudeventTransformProcessor, ld *plog.Logs) 
 
 			for k := 0; k < records.Len(); k++ {
 				//var cloudEventMetaData string
-				var cloudEventData cloudeventdata
 				currentMessage := records.At(k).Body()
 
 				// Get all the required attributes
@@ -150,12 +194,11 @@ func converRawMsgtToCloudEvent(ce *cloudeventTransformProcessor, ld *plog.Logs) 
 							overAllErrStr += "{" + ATTR_EVENT_COUNT + "} "
 						}
 
-						//fmt.Println(overAllErrStr)
 						return errors.New(fmt.Sprintf("Couldn't find %sattributes in the log", overAllErrStr))
 					}
 
 					cloudEventData = cloudeventdata{
-						count:     uint(eventCount.Int()),
+						count:     int(eventCount.Int()),
 						message:   currentMessage.AsString(),
 						name:      eventName.AsString(),
 						namespace: eventNs.AsString(),
@@ -184,15 +227,16 @@ func converRawMsgtToCloudEvent(ce *cloudeventTransformProcessor, ld *plog.Logs) 
 			}
 		}
 	}
+
 	return nil
 }
 
 /*
-	This function takes key and adds quotes around it and leaves value as is
-	Ex: `key` will become `"key"` and `val` will becom `"val"`
-	if the values has quotes in it like `"this value"` it'll become `\"this value\"`
-	So if key is `key` and value is `this is my "phone"`
-	the return bytearray will look like this `"key":"this is my \"phone\"`
+This function takes key and adds quotes around it and leaves value as is
+Ex: `key` will become `"key"` and `val` will becom `"val"`
+if the values has quotes in it like `"this value"` it'll become `\"this value\"`
+So if key is `key` and value is `this is my "phone"`
+the return bytearray will look like this `"key":"this is my \"phone\"`
 */
 func appendJsonObjStr(key []byte, val []byte, retSlice []byte) []byte {
 
@@ -204,10 +248,10 @@ func appendJsonObjStr(key []byte, val []byte, retSlice []byte) []byte {
 
 	retSlice = append(retSlice, QUOTE_BYTE)
 	valLen := len(val)
-	for i := 0; i < valLen; i++	{
-		if val[i] != QUOTE_BYTE	{
+	for i := 0; i < valLen; i++ {
+		if val[i] != QUOTE_BYTE {
 			retSlice = append(retSlice, val[i])
-		} else	{
+		} else {
 			retSlice = append(retSlice, BACKSLASH_BYTE)
 			retSlice = append(retSlice, val[i])
 		}
@@ -218,9 +262,9 @@ func appendJsonObjStr(key []byte, val []byte, retSlice []byte) []byte {
 }
 
 /*
-	This function takes key and adds quotes around it and leaves value as is
-	Ex: `key` will become `"key"` and `val` will remain `val`
-	The return output will be `"key":val` which gets appended and returned in retSlice
+This function takes key and adds quotes around it and leaves value as is
+Ex: `key` will become `"key"` and `val` will remain `val`
+The return output will be `"key":val` which gets appended and returned in retSlice
 */
 func appendJsonObjElse(key []byte, val []byte, retSlice []byte) []byte {
 	retSlice = append(retSlice, QUOTE_BYTE)
@@ -235,70 +279,50 @@ func appendJsonObjElse(key []byte, val []byte, retSlice []byte) []byte {
 }
 
 /*
-	This function constructs a Cloudevent message that can take multiple things from the passed config and the message that receiver sents
-	At the end it'll form a JSON which escapes any quotes that's found in the string just to construct a good byte array that's readable
-	by kafka and is easily parseable
+This function constructs a Cloudevent message that can take multiple things from the passed config and the message that receiver sents
+At the end it'll form a JSON which escapes any quotes that's found in the string just to construct a good byte array that's readable
+by kafka and is easily parseable
 */
 func (ce *cloudeventTransformProcessor) constructCloudEventJsonBody(vals *pcommon.Value, msgData *cloudeventdata) []byte {
 	//{"datacontenttype":"application/json; charset=utf-8","id":"%s","source":"%s","specversion":"%s","type":"%s","data":%s}
-
 	retSlice := make([]byte, 0, 512)
-
-	contentType := []byte("datacontenttype")
-	id := []byte("id")
-	source := []byte("source")
-	specVersion := []byte("specversion")
-	typ := []byte("type")
-	data := []byte("data")
 
 	// data body
 	retSlice = append(retSlice, OPEN_BRACE_BYTE)
-	retSlice = appendJsonObjStr(contentType, []byte("application/json; charset=utf-8"), retSlice)
+	retSlice = appendJsonObjStr([]byte("datacontenttype"), []byte("application/json; charset=utf-8"), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr(id, []byte(ce.id), retSlice)
+	retSlice = appendJsonObjStr([]byte("id"), []byte(ce.id), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr(source, []byte(ce.source), retSlice)
+	retSlice = appendJsonObjStr([]byte("source"), []byte(ce.source), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr(specVersion, []byte(ce.specversion), retSlice)
+	retSlice = appendJsonObjStr([]byte("specversion"), []byte(ce.specversion), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr(typ, []byte(ce.typ), retSlice)
+	retSlice = appendJsonObjStr([]byte("type"), []byte(ce.typ), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-
 	retSlice = append(retSlice, QUOTE_BYTE)
-	retSlice = append(retSlice, data...)
+	retSlice = append(retSlice, []byte("data")...)
 	retSlice = append(retSlice, QUOTE_BYTE)
-
 	retSlice = append(retSlice, COLON_BYTE)
 
 	{
 		//{"reason":"%s","start_time":"%s","name":"%s","uid":"%s","namespace":"%s","count":%s,"message":"%s"}
-
-		reason := []byte("reason")
-		startTime := []byte("start_time")
-		name := []byte("name")
-		uid := []byte("uid")
-		ns := []byte("namespace")
-		count := []byte("count")
-		message := []byte("message")
-
 		retSlice = append(retSlice, OPEN_BRACE_BYTE)
-		retSlice = appendJsonObjStr(reason, []byte(msgData.reason), retSlice)
+		retSlice = appendJsonObjStr([]byte("reason"), []byte(msgData.reason), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr(startTime, []byte(msgData.startTime), retSlice)
+		retSlice = appendJsonObjStr([]byte("start_time"), []byte(msgData.startTime), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr(name, []byte(msgData.name), retSlice)
+		retSlice = appendJsonObjStr([]byte("name"), []byte(msgData.name), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr(uid, []byte(msgData.uid), retSlice)
+		retSlice = appendJsonObjStr([]byte("uid"), []byte(msgData.uid), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr(ns, []byte(msgData.namespace), retSlice)
+		retSlice = appendJsonObjStr([]byte("namespace"), []byte(msgData.namespace), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjElse(count, []byte(strconv.Itoa(int(msgData.count))), retSlice)
+		retSlice = appendJsonObjElse([]byte("count"), []byte(strconv.Itoa(msgData.count)), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr(message, []byte(msgData.message), retSlice)
+		retSlice = appendJsonObjStr([]byte("message"), []byte(msgData.message), retSlice)
 		retSlice = append(retSlice, CLOSE_BRACE_BYTE)
 	}
 
 	retSlice = append(retSlice, CLOSE_BRACE_BYTE)
-
 	return retSlice
 }

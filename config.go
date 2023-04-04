@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	Ce CloudEventSpec `mapstructure:"ce"`
+	Ce     CloudEventSpec `mapstructure:"ce"`
+	Filter string         `mapstructure:"filter"`
 }
 
 type CloudEventSpec struct {
