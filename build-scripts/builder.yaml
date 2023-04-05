@@ -1,0 +1,19 @@
+dist:
+  name: hv-otelcol
+  module: github.com/open-telemetry/opentelemetry-collector
+  otelcol_version: "0.74.0"
+  description: Hitachi's Observability CSAF OTel collector distribution
+  output_path: ./hv-otel
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.74.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/filelogreceiver v0.74.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8seventsreceiver v0.74.0
+
+processors:
+  - gomod: github.com/akashvantara/cloudeventprocessor v0.0.1
+    path: ../
+
+exporters:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter v0.74.0
+  - gomod: go.opentelemetry.io/collector/exporter/loggingexporter v0.74.0

@@ -1,0 +1,35 @@
+receivers:
+  filelog: 
+    include: [ ./*.yaml ]
+    start_at: beginning 
+    include_file_path: true 
+    include_file_name: false 
+  otlp:
+    protocols:
+      grpc:
+      http:
+  k8s_events:
+processors:
+  cloudeventtransform:
+    ce:
+      append_type: type_is_type
+      source: some_source
+    filter: "*"
+exporters:
+  logging:
+  kafka/event:
+    protocol_version: 2.0.0
+    brokers: 
+      #- "localhost:9094"
+      - 20.241.216.249:9095
+    topic: test-topic
+    encoding: raw
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      #receivers: [otlp,k8s_events]
+      processors: [cloudeventtransform]
+      #processors: []
+      exporters: [logging]
+      #exporters: [kafka/event]
