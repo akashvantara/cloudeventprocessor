@@ -16,9 +16,8 @@ func TestLoadConfig(t *testing.T) {
 
 	cloudEventConfig := Config{
 		Ce: CloudEventSpec{
-			Id:          "test",
 			SpecVersion: "test_again",
-			Type:        "test_again_again",
+			AppendType:  "test_again_again",
 			Source:      "test_again_again_again",
 		},
 		Filter: "*",

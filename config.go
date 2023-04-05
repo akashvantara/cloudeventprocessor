@@ -2,6 +2,7 @@ package cloudeventtransform
 
 import (
 	"errors"
+	"unicode"
 
 	"go.opentelemetry.io/collector/component"
 )
@@ -12,9 +13,8 @@ type Config struct {
 }
 
 type CloudEventSpec struct {
-	Id          string `mapstructure:"id"`
 	SpecVersion string `mapstructure:"spec_version"`
-	Type        string `mapstructure:"type"`
+	AppendType  string `mapstructure:"append_type"`
 	Source      string `mapstructure:"source"`
 }
 
@@ -22,13 +22,14 @@ var _ component.Config = (*Config)(nil)
 
 // Validate checks if the processor configuration is valid
 func (cfg *Config) Validate() error {
-
-	if len(cfg.Ce.Id) == 0 {
-		return errors.New("id field can not be empty")
-	}
-
-	if len(cfg.Ce.Type) == 0 {
-		return errors.New("type field can not be empty")
+	if len(cfg.Ce.AppendType) == 0 {
+		return errors.New("append_type field can not be empty")
+	} else {
+		for _, ch := range cfg.Ce.AppendType {
+			if unicode.IsSpace(ch) {
+				return errors.New("append_type value can't have spaces")
+			}
+		}
 	}
 
 	if len(cfg.Ce.Source) == 0 {

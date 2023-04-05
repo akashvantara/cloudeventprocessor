@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -35,8 +36,10 @@ const (
 )
 
 var (
-	filters        []string
-	filterAllowAll bool = false
+	filters        []string         // k8s.event.reason filters
+	filterAllowAll bool     = false // if configuration changes this to true, it'll let pass all of the logs
+
+	typeVersion string // typeverson will define the body type of CloudEvent (right now it's v1 specific)
 )
 
 type cloudeventTransformProcessor struct {
@@ -53,7 +56,7 @@ type cloudeventdata struct {
 	namespace string
 	reason    string
 	startTime string
-	uid       string
+	uid       string // This field will be converted and passed to cloudeventTransformProcessor.id
 }
 
 func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTransformProcessor, error) {
@@ -65,16 +68,14 @@ func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTran
 		return nil, err
 	}
 
-	if len(cfg.Ce.Id) > 0 {
-		conf.Ce.Id = cfg.Ce.Id
+	if len(cfg.Ce.AppendType) > 0 {
+		conf.Ce.AppendType = cfg.Ce.AppendType
 	}
 
-	if len(cfg.Ce.Type) > 0 {
-		conf.Ce.Type = cfg.Ce.Type
-	}
-
-	if len(cfg.Ce.Type) > 0 {
+	if len(cfg.Ce.SpecVersion) > 0 {
 		conf.Ce.SpecVersion = cfg.Ce.SpecVersion
+
+		typeVersion = "v" + string(conf.Ce.SpecVersion[0])
 	}
 
 	if len(cfg.Ce.Source) > 0 {
@@ -97,10 +98,9 @@ func newProcessor(set component.TelemetrySettings, cfg *Config) (*cloudeventTran
 	}
 
 	p := &cloudeventTransformProcessor{
-		id:          conf.Ce.Id,
 		source:      conf.Ce.Source,
 		specversion: conf.Ce.SpecVersion,
-		typ:         conf.Ce.Type,
+		typ:         conf.Ce.AppendType,
 	}
 
 	return p, err
@@ -279,6 +279,29 @@ func appendJsonObjElse(key []byte, val []byte, retSlice []byte) []byte {
 }
 
 /*
+Function takes pretext from the params passed in config append_type and adds the reason to it
+Ex: append_type: `com.company.event` and reason: `Created Successfully`
+function will return `com.company.event.CreatedSuccessfully`
+*/
+func configureCeType(pretext string, reason string) string {
+	var ret strings.Builder
+	ret.Grow(len(pretext) + len(reason))
+
+	ret.WriteString(pretext)
+	ret.WriteRune('.')
+	ret.WriteString(typeVersion) // It'll define the version
+	ret.WriteRune('.')
+
+	for _, ch := range reason {
+		if !unicode.IsSpace(ch) {
+			ret.WriteRune(ch)
+		}
+	}
+
+	return ret.String()
+}
+
+/*
 This function constructs a Cloudevent message that can take multiple things from the passed config and the message that receiver sents
 At the end it'll form a JSON which escapes any quotes that's found in the string just to construct a good byte array that's readable
 by kafka and is easily parseable
@@ -291,13 +314,13 @@ func (ce *cloudeventTransformProcessor) constructCloudEventJsonBody(vals *pcommo
 	retSlice = append(retSlice, OPEN_BRACE_BYTE)
 	retSlice = appendJsonObjStr([]byte("datacontenttype"), []byte("application/json; charset=utf-8"), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr([]byte("id"), []byte(ce.id), retSlice)
+	retSlice = appendJsonObjStr([]byte("id"), []byte(msgData.uid), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
 	retSlice = appendJsonObjStr([]byte("source"), []byte(ce.source), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
 	retSlice = appendJsonObjStr([]byte("specversion"), []byte(ce.specversion), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
-	retSlice = appendJsonObjStr([]byte("type"), []byte(ce.typ), retSlice)
+	retSlice = appendJsonObjStr([]byte("type"), []byte(configureCeType(ce.typ, msgData.reason)), retSlice)
 	retSlice = append(retSlice, COMMA_BYTE)
 	retSlice = append(retSlice, QUOTE_BYTE)
 	retSlice = append(retSlice, []byte("data")...)
@@ -313,8 +336,8 @@ func (ce *cloudeventTransformProcessor) constructCloudEventJsonBody(vals *pcommo
 		retSlice = append(retSlice, COMMA_BYTE)
 		retSlice = appendJsonObjStr([]byte("name"), []byte(msgData.name), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
-		retSlice = appendJsonObjStr([]byte("uid"), []byte(msgData.uid), retSlice)
-		retSlice = append(retSlice, COMMA_BYTE)
+		//retSlice = appendJsonObjStr([]byte("uid"), []byte(msgData.uid), retSlice)
+		//retSlice = append(retSlice, COMMA_BYTE)
 		retSlice = appendJsonObjStr([]byte("namespace"), []byte(msgData.namespace), retSlice)
 		retSlice = append(retSlice, COMMA_BYTE)
 		retSlice = appendJsonObjElse([]byte("count"), []byte(strconv.Itoa(msgData.count)), retSlice)
