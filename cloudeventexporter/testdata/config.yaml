@@ -1,0 +1,6 @@
+ce:
+  spec_version: test_again
+  append_type: test_again_again
+  source: test_again_again_again
+filter: "*"
+endpoint: http://some_test_url.com:1234

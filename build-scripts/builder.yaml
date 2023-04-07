@@ -12,8 +12,10 @@ receivers:
 
 processors:
   - gomod: github.com/akashvantara/cloudeventprocessor v0.0.1
-    path: ../
+    path: ../cloudeventprocessor
 
 exporters:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter v0.74.0
   - gomod: go.opentelemetry.io/collector/exporter/loggingexporter v0.74.0
+  - gomod: github.com/akashvantara/cloudeventexporter v0.0.1
+    path: ../cloudeventexporter

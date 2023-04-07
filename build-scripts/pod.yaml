@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: otel-pod
+  namespace: observability-client
+spec:
+  containers:
+    - name: otel-container
+      image: hvacrbespin01.azurecr.io/custom-otel-ce:latest
+      command: [ "/otel", "--config", "/config.yaml" ]
+      #command: [ "/bin/sh", "-c", "top" ]
+      resources:
+        requests:
+          cpu: 1m
+          memory: 16Mi
+        limits:
+          cpu: 5m
+          memory: 64Mi
+  restartPolicy: Always
+  serviceAccount: otel-collector
+  serviceAccountName: otel-collector

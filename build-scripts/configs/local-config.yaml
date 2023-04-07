@@ -24,12 +24,18 @@ exporters:
       - 20.241.216.249:9095
     topic: test-topic
     encoding: raw
+  cloudeventexporter:
+    ce:
+      append_type: type_is_type
+      source: some_source
+    endpoint: http://localhost:8080
+    filter: "*"
 service:
   pipelines:
     logs:
       receivers: [filelog]
       #receivers: [otlp,k8s_events]
-      processors: [cloudeventtransform]
-      #processors: []
-      exporters: [logging]
-      #exporters: [kafka/event]
+      #processors: [cloudeventtransform]
+      processors: []
+      #exporters: [logging,kafka/event]
+      exporters: [logging,cloudeventexporter]

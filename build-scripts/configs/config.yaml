@@ -16,12 +16,19 @@ exporters:
     topic: test-topic
     protocol_version: 2.0.0
     encoding: raw
+  cloudeventexporter:
+    ce:
+      append_type: type_is_type
+      source: some_source
+    endpoint: "http://kafka-broker-ingress.knative-eventing.svc.cluster.local/default/kafka-broker"
+    filter: "*"
 service:
   pipelines:
     logs:
       receivers:
         - k8s_events
-      processors: 
-        - cloudeventtransform
+      processors: []
+        #- cloudeventtransform
       exporters: 
-        - kafka/event
+        #- kafka/event
+        - cloudeventexporter

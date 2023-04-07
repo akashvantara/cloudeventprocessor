@@ -3,20 +3,20 @@ module github.com/hv/akash.chandra/cloudeventtransform
 go 1.19
 
 require (
-	github.com/knadh/koanf v1.5.0 // indirect
 	github.com/stretchr/testify v1.8.2
 	go.opentelemetry.io/collector v0.74.0
 	go.opentelemetry.io/collector/component v0.74.0
 	go.opentelemetry.io/collector/consumer v0.74.0
-	go.uber.org/zap v1.24.0 // indirect
-)
-
-require (
 	go.opentelemetry.io/collector/confmap v0.74.0
 	go.opentelemetry.io/collector/pdata v1.0.0-rc8
 )
 
 require (
+)
+
+require (
+	go.uber.org/zap v1.24.0 // indirect
+	github.com/knadh/koanf v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
