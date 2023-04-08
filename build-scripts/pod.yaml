@@ -11,11 +11,11 @@ spec:
       #command: [ "/bin/sh", "-c", "top" ]
       resources:
         requests:
-          cpu: 1m
+          cpu: 2m
           memory: 16Mi
         limits:
-          cpu: 5m
-          memory: 64Mi
+          cpu: 7m
+          memory: 32Mi
   restartPolicy: Always
   serviceAccount: otel-collector
   serviceAccountName: otel-collector

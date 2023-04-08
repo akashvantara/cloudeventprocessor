@@ -7,4 +7,3 @@ COPY	./hv-otel/hv-otelcol /otel
 COPY	./configs/config.yaml /config.yaml	
 
 EXPOSE	4317
-#CMD	["/otel", "--config", "/config.yaml"]

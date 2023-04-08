@@ -44,7 +44,7 @@ const (
 	ATTR_EVENT_UID        = "k8s.event.uid"
 
 	HEADER_RETRY_AFTER = "Retry-After"
-	CONTENT_TYPE = "application/json"
+	CONTENT_TYPE       = "application/json"
 
 	CHAN_SZ = 4
 
@@ -256,68 +256,66 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 
 func (e *cloudeventTransformExporter) exportMessage() {
 	for ce := range e.ceChan {
-		msg := strings.ReplaceAll(ce.message, "\"", "\\\"")
+		// Sending the message to new go-routine
+		go func(ce *cloudeventdata) {
+			msg := strings.ReplaceAll(ce.message, "\"", "\\\"")
 
-		json_body := fmt.Sprintf(CE_DATA_META_BODY,
-			ce.reason,
-			ce.startTime,
-			ce.name,
-			ce.namespace,
-			ce.count,
-			msg,
-		)
+			json_body := fmt.Sprintf(CE_DATA_META_BODY,
+				ce.reason,
+				ce.startTime,
+				ce.name,
+				ce.namespace,
+				ce.count,
+				msg,
+			)
 
-		go e.sendCloudEvent(&e.config.Endpoint, &json_body, ce)
-	}
-}
+			req, err := http.NewRequest(http.MethodPost, e.config.Endpoint, bytes.NewReader([]byte(json_body)))
 
-func (e *cloudeventTransformExporter) sendCloudEvent(url *string, ceBody *string, ce *cloudeventdata) {
-	req, err := http.NewRequest(http.MethodPost, *url, bytes.NewReader([]byte(*ceBody)))
-
-	if err != nil {
-		e.logger.Error(err.Error())
-		return
-	}
-
-	req.Header.Add(HEADER_CE_ID, ce.uid)
-	req.Header.Add(HEADER_CE_TYPE, configureCeType(e.config.Ce.AppendType, ce.reason))
-	req.Header.Add(HEADER_CE_SOURCE, e.config.Ce.Source)
-	req.Header.Add(HEADER_CE_SPECVERSION, e.config.Ce.SpecVersion)
-	req.Header.Add(HEADER_CONTENT_TYPE, CONTENT_TYPE)
-
-	res, err := e.client.Do(req)
-
-	if err != nil {
-		e.logger.Error(err.Error())
-		return
-	}
-
-	if res.StatusCode >= 200 && res.StatusCode <= 299 {
-		e.logger.Error(err.Error())
-		return
-	}
-
-	var formattedErr error = fmt.Errorf("error exporting items, request to %s responded with HTTP Status Code %d",
-		*url, res.StatusCode)
-
-	if RETRY_ENABLED {
-		retryAfter := 0
-
-		// Check if the server is overwhelmed.
-		// See spec https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md#otlphttp-throttling
-		isThrottleError := res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable
-		if val := res.Header.Get(HEADER_RETRY_AFTER); isThrottleError && val != "" {
-			if seconds, err2 := strconv.Atoi(val); err2 == nil {
-				retryAfter = seconds
+			if err != nil {
+				e.logger.Error(err.Error())
+				return
 			}
-		}
-		err = exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
-		e.logger.Error(err.Error())
-		return
-	}
 
-	e.logger.Error(formattedErr.Error())
-	return
+			req.Header.Add(HEADER_CE_ID, ce.uid)
+			req.Header.Add(HEADER_CE_TYPE, configureCeType(e.config.Ce.AppendType, ce.reason))
+			req.Header.Add(HEADER_CE_SOURCE, e.config.Ce.Source)
+			req.Header.Add(HEADER_CE_SPECVERSION, e.config.Ce.SpecVersion)
+			req.Header.Add(HEADER_CONTENT_TYPE, CONTENT_TYPE)
+
+			res, err := e.client.Do(req)
+
+			if err != nil {
+				e.logger.Error(err.Error())
+				return
+			}
+
+			if res.StatusCode >= 200 && res.StatusCode <= 299 {
+				return //Success
+			}
+
+			var formattedErr error = fmt.Errorf("error exporting items, request to %s responded with HTTP Status Code %d",
+				e.config.Endpoint, res.StatusCode)
+
+			if RETRY_ENABLED {
+				retryAfter := 0
+
+				// Check if the server is overwhelmed.
+				// See spec https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md#otlphttp-throttling
+				isThrottleError := res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable
+				if val := res.Header.Get(HEADER_RETRY_AFTER); isThrottleError && val != "" {
+					if seconds, err2 := strconv.Atoi(val); err2 == nil {
+						retryAfter = seconds
+					}
+				}
+				err = exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
+				e.logger.Error(err.Error())
+				return
+			}
+
+			e.logger.Error(formattedErr.Error())
+			return
+		}(ce)
+	}
 }
 
 func configureCeType(pretext string, reason string) string {
