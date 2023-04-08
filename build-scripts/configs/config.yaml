@@ -18,8 +18,8 @@ exporters:
     encoding: raw
   cloudeventexporter:
     ce:
-      append_type: type_is_type
-      source: some_source
+      append_type: com.hv.cloudevent.k8sevents
+      source: dev-chandrila
     endpoint: "http://kafka-broker-ingress.knative-eventing.svc.cluster.local/default/kafka-broker"
     filter: "*"
 service:

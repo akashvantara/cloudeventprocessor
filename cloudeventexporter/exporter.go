@@ -44,14 +44,15 @@ const (
 	ATTR_EVENT_UID        = "k8s.event.uid"
 
 	HEADER_RETRY_AFTER = "Retry-After"
+	CONTENT_TYPE = "application/json"
 
 	CHAN_SZ = 4
 
 	FETCH_ATTR    = true
 	RETRY_ENABLED = false
-	
-	BACKSLASH_BYTE   = byte('\\')
-	QUOTE_BYTE       = byte('"')
+
+	BACKSLASH_BYTE = byte('\\')
+	QUOTE_BYTE     = byte('"')
 )
 
 type cloudeventTransformExporter struct {
@@ -253,21 +254,9 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 	return nil
 }
 
-func (e *cloudeventTransformExporter) exportMessage() error {
-	var err error = nil
+func (e *cloudeventTransformExporter) exportMessage() {
 	for ce := range e.ceChan {
-		msg := []byte(ce.message)
-		msgLen := len(msg)
-
-		msgSlice := make([]byte, msgLen+4)
-		for i := 0; i < msgLen; i++ {
-			if msg[i] != QUOTE_BYTE {
-				msgSlice = append(msgSlice, msg[i])
-			} else {
-				msgSlice = append(msgSlice, BACKSLASH_BYTE)
-				msgSlice = append(msgSlice, msg[i])
-			}
-		}
+		msg := strings.ReplaceAll(ce.message, "\"", "\\\"")
 
 		json_body := fmt.Sprintf(CE_DATA_META_BODY,
 			ce.reason,
@@ -275,35 +264,37 @@ func (e *cloudeventTransformExporter) exportMessage() error {
 			ce.name,
 			ce.namespace,
 			ce.count,
-			string(msgSlice),
+			msg,
 		)
 
 		go e.sendCloudEvent(&e.config.Endpoint, &json_body, ce)
 	}
-	return err
 }
 
-func (e *cloudeventTransformExporter) sendCloudEvent(url *string, ceBody *string, ce *cloudeventdata) error {
+func (e *cloudeventTransformExporter) sendCloudEvent(url *string, ceBody *string, ce *cloudeventdata) {
 	req, err := http.NewRequest(http.MethodPost, *url, bytes.NewReader([]byte(*ceBody)))
 
 	if err != nil {
-		return err
+		e.logger.Error(err.Error())
+		return
 	}
 
 	req.Header.Add(HEADER_CE_ID, ce.uid)
 	req.Header.Add(HEADER_CE_TYPE, configureCeType(e.config.Ce.AppendType, ce.reason))
 	req.Header.Add(HEADER_CE_SOURCE, e.config.Ce.Source)
 	req.Header.Add(HEADER_CE_SPECVERSION, e.config.Ce.SpecVersion)
-	req.Header.Add(HEADER_CONTENT_TYPE, "application/json")
+	req.Header.Add(HEADER_CONTENT_TYPE, CONTENT_TYPE)
 
 	res, err := e.client.Do(req)
 
 	if err != nil {
-		return err
+		e.logger.Error(err.Error())
+		return
 	}
 
 	if res.StatusCode >= 200 && res.StatusCode <= 299 {
-		return nil
+		e.logger.Error(err.Error())
+		return
 	}
 
 	var formattedErr error = fmt.Errorf("error exporting items, request to %s responded with HTTP Status Code %d",
@@ -320,10 +311,13 @@ func (e *cloudeventTransformExporter) sendCloudEvent(url *string, ceBody *string
 				retryAfter = seconds
 			}
 		}
-		return exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
+		err = exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
+		e.logger.Error(err.Error())
+		return
 	}
 
-	return formattedErr
+	e.logger.Error(formattedErr.Error())
+	return
 }
 
 func configureCeType(pretext string, reason string) string {
