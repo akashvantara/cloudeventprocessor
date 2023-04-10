@@ -11,12 +11,12 @@ import (
 )
 
 type Config struct {
+	Ce                            CloudEventSpec `mapstructure:"ce"`
+	Filter                        string         `mapstructure:"filter"`
+	//Endpoint                      string         `mapstructure:"endpoint"`
 	confighttp.HTTPClientSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
 	exporterhelper.QueueSettings  `mapstructure:"sending_queue"`
 	exporterhelper.RetrySettings  `mapstructure:"retry_on_failure"`
-	Ce                            CloudEventSpec `mapstructure:"ce"`
-	Filter                        string         `mapstructure:"filter"`
-	Endpoint                      string         `mapstructure:"endpoint"`
 }
 
 type CloudEventSpec struct {

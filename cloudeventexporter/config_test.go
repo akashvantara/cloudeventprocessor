@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
 )
 
@@ -21,7 +22,7 @@ func TestLoadConfig(t *testing.T) {
 			Source:      "test_again_again_again",
 		},
 		Filter: "*",
-		Endpoint: "http://some_test_url.com:1234",
+		HTTPClientSettings: confighttp.HTTPClientSettings{Endpoint: "http://some_test_url.com:1234"},
 	}
 
 	unmarsheledConf := Config{}
