@@ -10,9 +10,7 @@ processors:
 exporters:
   kafka/event:
     brokers: 
-      #- my-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
       - knative-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
-      #- 20.241.216.249:9095
     topic: test-topic
     protocol_version: 2.0.0
     encoding: raw

@@ -29,6 +29,7 @@ var _ component.Config = (*Config)(nil)
 
 // Validate checks if the processor configuration is valid
 func (cfg *Config) Validate() error {
+	// Validate if something is present in append_type as it forms Ce-Type value
 	if len(cfg.Ce.AppendType) == 0 {
 		return errors.New("append_type field can not be empty")
 	} else {
@@ -39,10 +40,12 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	// Check if source is present in the configuration
 	if len(cfg.Ce.Source) == 0 {
 		return errors.New("source field can not be empty")
 	}
 
+	// Check if the endpoint format is right
 	if cfg.Endpoint != "" {
 		_, err := url.Parse(cfg.Endpoint)
 		if err != nil {

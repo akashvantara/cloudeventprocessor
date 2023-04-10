@@ -51,16 +51,6 @@ func createLogsExporter(
 		return nil, errors.New("Failed to create cloud-event exporter")
 	}
 
-	/*
-		return exporterhelper.NewLogsExporter(
-			ctx,
-			set,
-			cfg,
-			ceExporter.,
-			exporterhelper.WithCapabilities(ceExporter.Capabilities()),
-		)
-	*/
-
 	return exporterhelper.NewLogsExporter(ctx, set, eCfg, ceExporter.pushLogs,
 		exporterhelper.WithStart(ceExporter.start),
 		exporterhelper.WithShutdown(ceExporter.shutdown),

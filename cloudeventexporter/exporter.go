@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -28,14 +27,21 @@ var (
 )
 
 const (
+	// Cloud-event body skeleton
 	CE_DATA_META_BODY = `{"reason":"%s","start_time":"%s","name":"%s","namespace":"%s","count":%d,"message":"%s"}`
 
+	// Cloud-event required headers
 	HEADER_CE_ID          = "Ce-Id"
 	HEADER_CE_TYPE        = "Ce-Type"
 	HEADER_CE_SOURCE      = "Ce-Source"
 	HEADER_CE_SPECVERSION = "Ce-Specversion"
 	HEADER_CONTENT_TYPE   = "Content-Type"
 
+	// Other required HTTP headers
+	HEADER_RETRY_AFTER = "Retry-After"
+	CONTENT_TYPE       = "application/json"
+
+	// Open-telemetry required resources to look for in logs
 	ATTR_EVENT_COUNT      = "k8s.event.count"
 	ATTR_EVENT_NAME       = "k8s.event.name"
 	ATTR_EVENT_NS         = "k8s.namespace.name"
@@ -43,16 +49,15 @@ const (
 	ATTR_EVENT_START_TIME = "k8s.event.start_time"
 	ATTR_EVENT_UID        = "k8s.event.uid"
 
-	HEADER_RETRY_AFTER = "Retry-After"
-	CONTENT_TYPE       = "application/json"
+	// Channel size and also the concurrent go thread counts which
+	// reads gets the cloud-event and sends HTTP request
+	CHAN_SZ = 2
 
-	CHAN_SZ = 4
-
+	// To avoid fetching attribute from OTel use FETCH_ATTR = false
 	FETCH_ATTR    = true
-	RETRY_ENABLED = false
 
-	BACKSLASH_BYTE = byte('\\')
-	QUOTE_BYTE     = byte('"')
+	// Enable retry for failed messages
+	RETRY_ENABLED = false
 )
 
 type cloudeventTransformExporter struct {
@@ -104,13 +109,6 @@ func newExporter(cf component.Config, set exporter.CreateSettings) (*cloudeventT
 		}
 	}
 
-	if conf.Endpoint != "" {
-		_, err := url.Parse(conf.Endpoint)
-		if err != nil {
-			return nil, errors.New("endpoint must be a valid URL")
-		}
-	}
-
 	userAgent := fmt.Sprintf("%s/%s (%s/%s)",
 		set.BuildInfo.Description, set.BuildInfo.Version, runtime.GOOS, runtime.GOARCH)
 
@@ -133,18 +131,26 @@ func (e *cloudeventTransformExporter) start(_ context.Context, host component.Ho
 		return err
 	}
 	e.client = client
-	go e.exportMessage()
+
+	// Spin the go-routines which will listen to messages dropped in ceChan channel
+	for i := 0; i < CHAN_SZ; i++ {
+		go e.exportMessage()
+	}
 	return nil
 }
 
 func (e *cloudeventTransformExporter) shutdown(_ context.Context) error {
+	// Close the channel to receive messages further
 	close(e.ceChan)
 	return nil
 }
 
 func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs) error {
+	// Body that can be re-used for all the messages present in loop
+	// to avoid extra allocation/s
 	var ce cloudeventdata
 
+	// Remove anything not required from logs
 	if !filterAllowAll {
 		ld.ResourceLogs().RemoveIf(func(rl plog.ResourceLogs) bool {
 			rl.ScopeLogs().RemoveIf(func(sl plog.ScopeLogs) bool {
@@ -186,6 +192,8 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 				if FETCH_ATTR {
 					attrMap := records.At(k).Attributes()
 
+					// Check if the required things are present,
+					// if not fail at the earliest reporting missing things
 					eventCount, eventCountOk := attrMap.Get(ATTR_EVENT_COUNT)
 					eventName, eventNameOk := attrMap.Get(ATTR_EVENT_NAME)
 					eventNs, eventNsOk := attrMap.Get(ATTR_EVENT_NS)
@@ -235,6 +243,8 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 						uid:       eventUid.AsString(),
 					}
 				} else {
+					// Useful case for testing but this can be totally removed
+					// Though it can be utilized if expansion is required later
 					ce = cloudeventdata{
 						count:     0,
 						message:   currentMessage.AsString(),
@@ -246,6 +256,7 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 					}
 				}
 
+				// Send the message to channel so that it can be processed in parallel
 				e.ceChan <- &ce
 			}
 		}
@@ -256,68 +267,71 @@ func (e *cloudeventTransformExporter) pushLogs(ctx context.Context, ld plog.Logs
 
 func (e *cloudeventTransformExporter) exportMessage() {
 	for ce := range e.ceChan {
-		// Sending the message to new go-routine
-		go func(ce *cloudeventdata) {
-			msg := strings.ReplaceAll(ce.message, "\"", "\\\"")
+		// Correct JSON message if it has quotes
+		msg := strings.ReplaceAll(ce.message, "\"", "\\\"")
 
-			json_body := fmt.Sprintf(CE_DATA_META_BODY,
-				ce.reason,
-				ce.startTime,
-				ce.name,
-				ce.namespace,
-				ce.count,
-				msg,
-			)
+		// Prepare JSON body
+		json_body := fmt.Sprintf(CE_DATA_META_BODY,
+			ce.reason,
+			ce.startTime,
+			ce.name,
+			ce.namespace,
+			ce.count,
+			msg,
+		)
 
-			req, err := http.NewRequest(http.MethodPost, e.config.Endpoint, bytes.NewReader([]byte(json_body)))
+		// Create new request body and configure it with required things
+		req, err := http.NewRequest(http.MethodPost, e.config.Endpoint, bytes.NewReader([]byte(json_body)))
 
-			if err != nil {
-				e.logger.Error(err.Error())
-				return
-			}
+		if err != nil {
+			e.logger.Error(err.Error())
+			continue
+		}
 
-			req.Header.Add(HEADER_CE_ID, ce.uid)
-			req.Header.Add(HEADER_CE_TYPE, configureCeType(e.config.Ce.AppendType, ce.reason))
-			req.Header.Add(HEADER_CE_SOURCE, e.config.Ce.Source)
-			req.Header.Add(HEADER_CE_SPECVERSION, e.config.Ce.SpecVersion)
-			req.Header.Add(HEADER_CONTENT_TYPE, CONTENT_TYPE)
+		// Add all the required headers
+		req.Header.Add(HEADER_CE_ID, ce.uid)
+		req.Header.Add(HEADER_CE_TYPE, configureCeType(e.config.Ce.AppendType, ce.reason))
+		req.Header.Add(HEADER_CE_SOURCE, e.config.Ce.Source)
+		req.Header.Add(HEADER_CE_SPECVERSION, e.config.Ce.SpecVersion)
+		req.Header.Add(HEADER_CONTENT_TYPE, CONTENT_TYPE)
 
-			res, err := e.client.Do(req)
+		res, err := e.client.Do(req)
 
-			if err != nil {
-				e.logger.Error(err.Error())
-				return
-			}
+		if err != nil {
+			e.logger.Error(err.Error())
+			continue
+		}
 
-			if res.StatusCode >= 200 && res.StatusCode <= 299 {
-				return //Success
-			}
+		// Check if the status code is acceptable and continue for next requests
+		if res.StatusCode >= 200 && res.StatusCode <= 299 {
+			continue
+		}
 
-			var formattedErr error = fmt.Errorf("error exporting items, request to %s responded with HTTP Status Code %d",
-				e.config.Endpoint, res.StatusCode)
+		var formattedErr error = fmt.Errorf("error exporting items, request to %s responded with HTTP Status Code %d",
+			e.config.Endpoint, res.StatusCode)
 
-			if RETRY_ENABLED {
-				retryAfter := 0
+		// If enabled, retry for errors, otherwise print error and leave
+		if RETRY_ENABLED {
+			retryAfter := 0
 
-				// Check if the server is overwhelmed.
-				// See spec https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md#otlphttp-throttling
-				isThrottleError := res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable
-				if val := res.Header.Get(HEADER_RETRY_AFTER); isThrottleError && val != "" {
-					if seconds, err2 := strconv.Atoi(val); err2 == nil {
-						retryAfter = seconds
-					}
+			// Check if the server is overwhelmed.
+			// See spec https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/otlp.md#otlphttp-throttling
+			isThrottleError := res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable
+			if val := res.Header.Get(HEADER_RETRY_AFTER); isThrottleError && val != "" {
+				if seconds, err2 := strconv.Atoi(val); err2 == nil {
+					retryAfter = seconds
 				}
-				err = exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
-				e.logger.Error(err.Error())
-				return
 			}
+			err = exporterhelper.NewThrottleRetry(formattedErr, time.Duration(retryAfter)*time.Second)
+			e.logger.Error(err.Error())
+			continue
+		}
 
-			e.logger.Error(formattedErr.Error())
-			return
-		}(ce)
+		e.logger.Error(formattedErr.Error())
 	}
 }
 
+// Configures Ce-Type header's value, using the given reason (removes any spaces present)
 func configureCeType(pretext string, reason string) string {
 	var ret strings.Builder
 	ret.Grow(len(pretext) + len(reason))
